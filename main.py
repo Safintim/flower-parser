@@ -51,18 +51,31 @@ def get_bouquet_sizes(info):
     ]
 
 
-def get_bouquet_info(html):
+def get_bouquet_slug(link):
+    return link.split('/')[-1]
+
+
+def get_bouquet_info_from_detail_page(html, bouquet_info):
     soup = BeautifulSoup(html, 'html.parser')
     info = soup.select_one('div.info')
     return {
         'title': info.select_one('h1').text,
-        'sizes': get_bouquet_sizes(info)
+        'sizes': get_bouquet_sizes(info),
+        'slug': get_bouquet_slug(bouquet_info['url']),
+        'big_image': soup.select_one('.slides a').attrs['href'],
+        **bouquet_info,
     }
 
 
-def get_bouquets_links(html):
+def get_bouquets_links_and_small_image(html):
     soup = BeautifulSoup(html, 'html.parser')
-    return [a.attrs['href'] for a in soup.select('.products-list .img a')]
+    return [
+        {
+            'url': a.attrs['href'],
+            'small_image': a.select_one('img').attrs['src']
+        } 
+        for a in soup.select('.products-list .img a')
+    ]
 
 
 def fetch_page(url, params=None):
@@ -72,23 +85,22 @@ def fetch_page(url, params=None):
     return response
 
 
-def fetch_bouquets_links(url=BOUQUETS_URL):
+def fetch_bouquets_info_from_list_page(url=BOUQUETS_URL):
     page = 1
     params = {'page': page}
     response = fetch_page(url, params=params)
 
     while response.status_code != 404:
         response = fetch_page(url, params=params)
-        yield get_bouquets_links(response.text)
+        yield get_bouquets_links_and_small_image(response.text)
         params['page'] += 1
-        return []
 
 
 def fetch_bouquets_info():
-    for bouquets_links in fetch_bouquets_links():
-        for link in bouquets_links:
-            bouquet_page = fetch_page(link).text
-            yield get_bouquet_info(bouquet_page)
+    for bouquets_info in fetch_bouquets_info_from_list_page():
+        for bouquet_info in bouquets_info:
+            bouquet_page = fetch_page(bouquet_info['url']).text
+            yield get_bouquet_info_from_detail_page(bouquet_page, bouquet_info)
 
 
 def save_to_json(file_path, bouquets):
@@ -112,16 +124,15 @@ def is_exist_dir(dir_path):
 def flow_parse():
     parser = create_parser()
     namespace = parser.parse_args()
-    print(namespace.dir_path, namespace.file_name)
+
     try:
         bouquets = list(fetch_bouquets_info())
+        dir_path = namespace.dir_path or os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(dir_path, f'{namespace.file_name}.json')
+        save_to_json(file_path, bouquets)
     except requests.RequestException as e:
         logging.error(e)
         exit(e)
-
-    dir_path = namespace.dir_path or os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(dir_path, f'{namespace.file_name}.json')
-    save_to_json(file_path, bouquets)
 
 
 if __name__ == '__main__':
